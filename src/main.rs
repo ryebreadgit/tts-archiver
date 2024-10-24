@@ -1,4 +1,3 @@
-mod schema;
 mod extract;
 mod process;
 use std::fs;
@@ -45,14 +44,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let args = Args::from_args();
 
-    // set base path to Documents\My Games\Tabletop Simulator
+    // set base cache path to {USERPROFILE}\Documents\My Games\Tabletop Simulator
     let user = std::env::var("USERPROFILE")?;
     let mut cache_path = format!("{}/Documents/My Games/Tabletop Simulator/", user);
     if let Some(cache) = &args.cache {
         cache_path = match cache.to_str() {
             Some(path) => path.to_string(),
             None => {
-                error!("Invalid output path: {}", cache.display());
+                error!("Invalid cache path: {}", cache.display());
                 return Ok(());
             }
         };
@@ -63,11 +62,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
 
-    let audio_path = format!("{}/Mods/Audio/", cache_path);
-    let image_path = format!("{}/Mods/Images/", cache_path);
-    let pdf_path = format!("{}/Mods/PDF/", cache_path);
-    let model_path = format!("{}/Mods/Models/", cache_path);
-    let workshop_path = format!("{}/Mods/Workshop/", cache_path);
+    let audio_path = &format!("{}/Mods/Audio/", cache_path);
+    let image_path = &format!("{}/Mods/Images/", cache_path);
+    let pdf_path = &format!("{}/Mods/PDF/", cache_path);
+    let model_path = &format!("{}/Mods/Models/", cache_path);
+    let workshop_path = &format!("{}/Mods/Workshop/", cache_path);
+    let image_raw_path = &format!("{}/Mods/Images Raw/", cache_path);
+    let model_raw_path = &format!("{}/Mods/Models Raw/", cache_path);
+    let assetbundles_path = &format!("{}/Mods/Assetbundles/", cache_path);
+    let text_path = &format!("{}/Mods/Text/", cache_path);
 
     // Create folders if they don't exist
     fs::create_dir_all(&audio_path)?;
@@ -75,12 +78,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     fs::create_dir_all(&pdf_path)?;
     fs::create_dir_all(&model_path)?;
     fs::create_dir_all(&workshop_path)?;
+    fs::create_dir_all(&image_raw_path)?;
+    fs::create_dir_all(&model_raw_path)?;
+    fs::create_dir_all(&assetbundles_path)?;
+    fs::create_dir_all(&text_path)?;
 
     let cached_files = fs::read_dir(&audio_path)?
         .chain(fs::read_dir(&image_path)?)
         .chain(fs::read_dir(&pdf_path)?)
         .chain(fs::read_dir(&workshop_path)?)
         .chain(fs::read_dir(&model_path)?)
+        .chain(fs::read_dir(&image_raw_path)?)
+        .chain(fs::read_dir(&model_raw_path)?)
+        .chain(fs::read_dir(&assetbundles_path)?)
+        .chain(fs::read_dir(&text_path)?)
         .filter_map(|entry| {
             let entry = entry.ok()?;
             let path = entry.path();
