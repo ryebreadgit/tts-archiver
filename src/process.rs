@@ -3,14 +3,14 @@ use std::io::Write;
 use std::fs;
 use std::path::PathBuf;
 use std::collections::HashSet;
-use log::{info, error, debug};
+use log::{info, error, warn, debug};
 use tree_magic;
 use bytes::Bytes;
 use std::time::Duration;
 use tokio::time::sleep;
 use regex::Regex;
 
-pub async fn process_tts_save(tts_json_path: &str, cached_files: &HashSet<String>, cache_path: &str) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn process_tts_save(tts_json_path: &str, cached_files: &HashSet<String>, cache_path: &str, ignore_error: bool, dry_run: bool) -> Result<(Vec<String>, Vec<String>), Box<dyn std::error::Error>> {
     let audio_path = &format!("{}/Mods/Audio/", cache_path);
     let image_path = &format!("{}/Mods/Images/", cache_path);
     let pdf_path = &format!("{}/Mods/PDF/", cache_path);
@@ -37,6 +37,11 @@ pub async fn process_tts_save(tts_json_path: &str, cached_files: &HashSet<String
     let unique_urls: HashSet<_> = urls.into_iter().collect();
     let mut unique_urls: Vec<String> = unique_urls.into_iter().collect();
 
+    let mut successful_paths: Vec<String> = Vec::new();
+    let mut failed_paths: Vec<String> = Vec::new();
+
+    let shortlink_pattern = get_url_shortener_regex().await?;
+
     while let Some(url) = unique_urls.pop() {
         let filename = url.replace(|c: char| !c.is_ascii_alphanumeric(), "");
         if cached_files.contains(&filename) {
@@ -44,21 +49,36 @@ pub async fn process_tts_save(tts_json_path: &str, cached_files: &HashSet<String
             continue;
         }
 
-        let (bytes, _, extension) = match fetch_content(&url).await {
+        if shortlink_pattern.is_match(&url) {
+            warn!("Skipping shortlink: {}", url);
+            continue;
+        }
+
+        let (bytes, _, extension) = match fetch_content(&url, dry_run).await {
             Ok(result) => result,
             Err(e) => {
+                failed_paths.push(url.clone());
                 error!("Failed to fetch content from {}: {}", url, e);
-                continue;
+                if ignore_error || dry_run {
+                    continue;
+                } else {
+                    return Err(e)?;
+                }
             }
         };
         let mut file_path = "";
         let mut ext = extension.unwrap_or_else(|| {
-            // Try to get the extension from the url
-            let detected_ext = url.split('.').last().map(|ext| ext.to_lowercase()).unwrap_or_else(|| "".to_string());
-            if detected_ext.len() > 10 { // limit extension length to 10 characters to prevent issues with misconfigured urls
-                return "".to_string();
+            // Check if there is more than one dot in the URL
+            if url.matches('.').count() > 1 {
+                // Try to get the extension from the URL
+                let detected_ext = url.split('.').last().map(|ext| ext.to_lowercase()).unwrap_or_else(|| "".to_string());
+                if detected_ext.len() > 10 { // limit extension length to 10 characters to prevent issues with misconfigured URLs
+                    return "".to_string();
+                }
+                detected_ext
+            } else {
+                "".to_string()
             }
-            detected_ext
         });
 
         if ext.is_empty() {
@@ -100,6 +120,7 @@ pub async fn process_tts_save(tts_json_path: &str, cached_files: &HashSet<String
             let lua_urls = match extract::get_urls_from_str(&lua_str).await {
                 Ok(urls) => urls,
                 Err(e) => {
+                    failed_paths.push(url.clone());
                     error!("Failed to extract urls from lua file: {}", e);
                     continue;
                 }
@@ -129,7 +150,8 @@ pub async fn process_tts_save(tts_json_path: &str, cached_files: &HashSet<String
         }
 
         if file_path.is_empty() {
-            error!("Unsupported file extension for {}: {:?}", url, ext);
+            warn!("Unsupported file extension for {}: {:?}", url, ext);
+            // failed_paths.push(url.clone()); // Don't add to failed paths as these are common files that are not supported (mostly web pages)
             continue;
         }
         
@@ -139,6 +161,11 @@ pub async fn process_tts_save(tts_json_path: &str, cached_files: &HashSet<String
         }
 
         let file_path = format!("{}{}{}", file_path, &filename, file_ext);
+
+        if dry_run {
+            info!("Dry run: Would save content from '{}' to '{}'", url, file_path);
+            continue;
+        }
 
         // create folder
         match fs::create_dir_all(&file_path.rsplitn(2, '/').last().unwrap()) {
@@ -167,8 +194,7 @@ pub async fn process_tts_save(tts_json_path: &str, cached_files: &HashSet<String
     let parent_folder = match tts_path.parent() {
         Some(parent) => parent,
         None => {
-            error!("Failed to get parent folder of {}", tts_json_path);
-            return Ok(());
+            Err(format!("Failed to get parent folder of {}", tts_json_path))?
         }
     };
 
@@ -196,7 +222,11 @@ pub async fn process_tts_save(tts_json_path: &str, cached_files: &HashSet<String
     if let Some(workshop_image) = workshop_image {
         let workshop_image_filename = workshop_image.file_name().unwrap().to_string_lossy().to_string();
         let workshop_image_path = format!("{}/{}", workshop_path, workshop_image_filename);
-        if let Err(err) = fs::copy(&workshop_image, &workshop_image_path) {
+
+        if dry_run {
+            info!("Dry run: Would copy workshop image from {} to {}", workshop_image.display(), workshop_image_path);
+        }
+        else if let Err(err) = fs::copy(&workshop_image, &workshop_image_path) {
             return Err(format!("Failed to copy workshop image from {} to {}: {}", workshop_image.display(), workshop_image_path, err))?;
         }
         debug!("Copied workshop image from {} to {}", workshop_image.display(), workshop_image_path);
@@ -208,19 +238,48 @@ pub async fn process_tts_save(tts_json_path: &str, cached_files: &HashSet<String
     let mut tts_json_file = fs::File::create(format!("{}/{}", workshop_path, tts_filename))?;
     tts_json_file.write_all(tts_json_str.as_bytes())?;
 
-    Ok(())
+    if !failed_paths.is_empty() {
+        let missing_json_path = format!("{}/{}_missing.txt", workshop_path, tts_filestub);
+        if dry_run {
+            info!("Dry run: Would write missing urls to {}", missing_json_path);
+        } else {
+            let mut missing_json_file = fs::File::create(&missing_json_path)?;
+            let missing_json_str = serde_json::to_string_pretty(&failed_paths)?;
+            missing_json_file.write_all(missing_json_str.as_bytes())?;
+        }
+        debug!("Wrote missing urls to {}", missing_json_path);
+    }
+
+    successful_paths.append(&mut unique_urls);
+
+    Ok((successful_paths, failed_paths))
 }
 
-async fn fetch_content(url: &str) -> Result<(Bytes, Option<String>, Option<String>), Box<dyn std::error::Error>> {
+async fn fetch_content(url: &str, dry_run: bool) -> Result<(Bytes, Option<String>, Option<String>), Box<dyn std::error::Error>> {
     let max_retries = 3;
     let mut attempts = 0;
 
+    let client = reqwest::Client::new();
+    let user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:131.0) Gecko/20100101 Firefox/131.0";
+    let parsed_url = reqwest::Url::parse(url)?;
+    let host = parsed_url.host_str().ok_or("")?;
+
     loop {
         attempts += 1;
-        match reqwest::get(url).await {
+        let res = match dry_run {
+            true => client.head(url).header(reqwest::header::USER_AGENT, user_agent).header(reqwest::header::HOST, host).send().await,
+            false => client.get(url).header(reqwest::header::USER_AGENT, user_agent).header(reqwest::header::HOST, host).send().await
+        };
+        
+        match res {
             Ok(resp) => {
                 if resp.status() != 200 {
-                    return Err(format!("non-200 response from {}: {}", url, resp.status()).into());
+                    if attempts >= max_retries {
+                        return Err(format!("Invalid response status from {}: {}", url, resp.status()).into());
+                    }
+                    debug!("Failed to fetch content from {}: {}. Retrying in 2 seconds...", url, resp.status());
+                    sleep(Duration::from_secs(2)).await;
+                    continue;
                 }
                 // get file name and extension using regex
                 let content_disposition = match resp.headers().get(reqwest::header::CONTENT_DISPOSITION) {
@@ -257,4 +316,35 @@ async fn fetch_content(url: &str) -> Result<(Bytes, Option<String>, Option<Strin
             }
         }
     }
+}
+
+async fn get_url_shortener_regex() -> Result<Regex, Box<dyn std::error::Error>> {
+    let shortlink_pattern = r"(?ix)
+        https?://
+        (?:
+            (?:
+                (?:
+                    (?:bit\.ly|tinyurl\.com|t\.co|goo\.gl|tiny\.cc|is\.gd|cli\.gs|
+                       qr\.ae|po\.st|bc\.vc|twitthis\.com|u\.to|j\.mp|buzurl\.com|
+                       cutt\.ly|u\.bb|yourls\.org|x\.co|prettylinkpro\.com|scrnch\.me|
+                       filoops\.info|vzturl\.com|qr\.net|1url\.com|tweez\.me|v\.gd|tr\.im|
+                       link\.zip|ow\.ly|tiny\.pl|url\.ie|short\.ie|n9\.cl|db\.tt|hop\.click|
+                       buff\.ly|rurl\.me|s2r\.co|snip\.ly|w\.tc|trib\.al|snurl\.com|
+                       surl\.co\.uk|wp\.me|go\.ly|sl\.ly|rb\.gy|dai\.ly)
+                    |
+                    (?:[a-z0-9-]+\.)?(?:short|tiny|shrtn|shor|shrt|go|red|opn|reduceln|sh)\.
+                    [a-z]{2,6}
+                )
+                /
+                [a-zA-Z0-9_-]{4,25}
+                (?:\?[a-zA-Z0-9_=&%-]*)?
+            )
+            |
+            (?:
+                discord\.gg/[a-zA-Z0-9_-]{5,10}
+            )
+        )
+        ";
+
+    Regex::new(&shortlink_pattern).map_err(|e| e.into())
 }

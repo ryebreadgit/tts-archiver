@@ -10,19 +10,18 @@ use std::path::PathBuf;
 #[derive(StructOpt, Debug)]
 #[structopt(name = "tts-archiver")]
 pub struct Args {
-    // Verbose (enable for debug logs)
     #[structopt(short="v", long)]
     verbose: bool,
 
-    // Dry run (don't actually download files)
+    /// Dry run. Only does a head request to check if file exists and does not download, processing is still simulated.
     #[structopt(short="dry", long)]
     dry_run: bool,
 
-    // Ignore errors (continue processing even if errors occur)
+    /// Ignore errors (continue processing even if errors occur)
     #[structopt(short="i", long)]
     ignore_errors: bool,
 
-    // Output path
+    /// Output folder for downloaded files (Default: input file's parent folder)
     #[structopt(short, long, parse(from_os_str))]
     output: Option<PathBuf>,
 
@@ -101,7 +100,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .collect::<HashSet<_>>();
 
     for file in args.files {
-        process::process_tts_save(file.to_str().unwrap(), &cached_files, &cache_path).await?;
+        process::process_tts_save(file.to_str().unwrap(), &cached_files, &cache_path, args.ignore_errors, args.dry_run).await?;
     }
 
     Ok(())
