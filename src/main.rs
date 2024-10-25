@@ -23,8 +23,12 @@ pub struct Args {
     ignore_errors: bool,
 
     /// Prefetch files only (do not zip files, only save to cache)
-    #[structopt(short="p", long)]
+    #[structopt(short="pre", long)]
     prefetch: bool,
+
+    /// Pack files only (zip cached files, do not download new files)
+    #[structopt(short, long)]
+    pack: bool,
 
     /// Output folder for downloaded files (Default: input file's parent folder)
     #[structopt(short, long, parse(from_os_str))]
@@ -109,7 +113,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .collect::<HashMap<_, _>>();
 
     for file in args.files {
-        let (successful_files, failed_files) = process::process_tts_save(file.to_str().unwrap(), &cached_files, &cache_path, args.ignore_errors, args.dry_run).await?;
+        let (successful_files, failed_files) = process::process_tts_save(file.to_str().unwrap(), &cached_files, &cache_path, args.ignore_errors, args.dry_run, args.pack).await?;
         info!("Preprocessing completed. {} files processed, {} files failed.", successful_files.len(), failed_files.len());
         if args.dry_run {
             info!("Dry run completed. No files downloaded.");

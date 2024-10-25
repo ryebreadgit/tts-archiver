@@ -10,7 +10,7 @@ use std::time::Duration;
 use tokio::time::sleep;
 use regex::Regex;
 
-pub async fn process_tts_save(tts_json_path: &str, cached_files: &HashMap<String, String>, cache_path: &str, ignore_error: bool, dry_run: bool) -> Result<(Vec<String>, Vec<String>), Box<dyn std::error::Error>> {
+pub async fn process_tts_save(tts_json_path: &str, cached_files: &HashMap<String, String>, cache_path: &str, ignore_error: bool, dry_run: bool, pack: bool) -> Result<(Vec<String>, Vec<String>), Box<dyn std::error::Error>> {
     let audio_path = &format!("{}/Mods/Audio/", cache_path);
     let image_path = &format!("{}/Mods/Images/", cache_path);
     let pdf_path = &format!("{}/Mods/PDF/", cache_path);
@@ -48,6 +48,15 @@ pub async fn process_tts_save(tts_json_path: &str, cached_files: &HashMap<String
             debug!("Skipping already cached file {} at path: {:?}", filename, full_path);
             successful_paths.push(full_path.clone());
             continue;
+        }
+
+        if pack {
+            error!("missing file: {}", url);
+            if ignore_error {
+                continue
+            } else {
+                return Err(format!("missing file: {}", url))?;
+            }
         }
 
         if shortlink_pattern.is_match(&url) {
