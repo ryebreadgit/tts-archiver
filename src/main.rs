@@ -1,8 +1,9 @@
 mod extract;
 mod process;
+mod store;
 use std::fs;
-use std::collections::HashSet;
-use log::{info, error};
+use std::collections::HashMap;
+use log::{info, error, debug};
 use log4rs::{config::RawConfig, init_raw_config};
 use structopt::StructOpt;
 use std::path::PathBuf;
@@ -20,6 +21,10 @@ pub struct Args {
     /// Ignore errors (continue processing even if errors occur)
     #[structopt(short="i", long)]
     ignore_errors: bool,
+
+    /// Prefetch files only (do not zip files, only save to cache)
+    #[structopt(short="p", long)]
+    prefetch: bool,
 
     /// Output folder for downloaded files (Default: input file's parent folder)
     #[structopt(short, long, parse(from_os_str))]
@@ -45,7 +50,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // set base cache path to {USERPROFILE}\Documents\My Games\Tabletop Simulator
     let user = std::env::var("USERPROFILE")?;
-    let mut cache_path = format!("{}/Documents/My Games/Tabletop Simulator/", user);
+    let mut cache_path = format!("{}/Documents/My Games/Tabletop Simulator", user);
     if let Some(cache) = &args.cache {
         cache_path = match cache.to_str() {
             Some(path) => path.to_string(),
@@ -55,6 +60,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         };
     }
+
+    // Strip trailing slashes
+    cache_path = cache_path.trim_end_matches('/').trim_end_matches('\\').to_string();
 
     if !PathBuf::from(&cache_path).exists() {
         error!("Cache path does not exist: {}", cache_path);
@@ -82,7 +90,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     fs::create_dir_all(&assetbundles_path)?;
     fs::create_dir_all(&text_path)?;
 
-    let cached_files = fs::read_dir(&audio_path)?
+    let cached_files: HashMap<String, String> = fs::read_dir(&audio_path)?
         .chain(fs::read_dir(&image_path)?)
         .chain(fs::read_dir(&pdf_path)?)
         .chain(fs::read_dir(&workshop_path)?)
@@ -94,13 +102,36 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .filter_map(|entry| {
             let entry = entry.ok()?;
             let path = entry.path();
+            let path_str = path.to_str()?;
             let filename = path.file_stem()?.to_string_lossy().to_string(); // remove extension from filename to help with comparison from url alone
-            Some(filename)
+            Some((filename, path_str.to_string()))
         })
-        .collect::<HashSet<_>>();
+        .collect::<HashMap<_, _>>();
 
     for file in args.files {
-        process::process_tts_save(file.to_str().unwrap(), &cached_files, &cache_path, args.ignore_errors, args.dry_run).await?;
+        let (successful_files, failed_files) = process::process_tts_save(file.to_str().unwrap(), &cached_files, &cache_path, args.ignore_errors, args.dry_run).await?;
+        info!("Preprocessing completed. {} files processed, {} files failed.", successful_files.len(), failed_files.len());
+        if args.dry_run {
+            info!("Dry run completed. No files downloaded.");
+            continue;
+        }
+        if args.prefetch {
+            info!("Prefetch completed. Files saved to cache.");
+            continue;
+        }
+
+        let output_folder = match &args.output {
+            Some(output) => output.to_str().unwrap().to_string(),
+            None => {
+                let parent_folder = file.parent().unwrap().to_str().unwrap();
+                parent_folder.to_string()
+            }
+        };
+
+        let output_path = format!("{}/{}.zip", output_folder, file.file_stem().unwrap().to_str().unwrap());
+
+        store::pack_files(successful_files, &cache_path, &output_path).await?;
+        info!("Completed backing up archive to: {}", output_path);
     }
 
     Ok(())

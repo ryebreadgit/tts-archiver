@@ -2,7 +2,7 @@ use crate::extract;
 use std::io::Write;
 use std::fs;
 use std::path::PathBuf;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use log::{info, error, warn, debug};
 use tree_magic;
 use bytes::Bytes;
@@ -10,7 +10,7 @@ use std::time::Duration;
 use tokio::time::sleep;
 use regex::Regex;
 
-pub async fn process_tts_save(tts_json_path: &str, cached_files: &HashSet<String>, cache_path: &str, ignore_error: bool, dry_run: bool) -> Result<(Vec<String>, Vec<String>), Box<dyn std::error::Error>> {
+pub async fn process_tts_save(tts_json_path: &str, cached_files: &HashMap<String, String>, cache_path: &str, ignore_error: bool, dry_run: bool) -> Result<(Vec<String>, Vec<String>), Box<dyn std::error::Error>> {
     let audio_path = &format!("{}/Mods/Audio/", cache_path);
     let image_path = &format!("{}/Mods/Images/", cache_path);
     let pdf_path = &format!("{}/Mods/PDF/", cache_path);
@@ -38,14 +38,15 @@ pub async fn process_tts_save(tts_json_path: &str, cached_files: &HashSet<String
     let mut unique_urls: Vec<String> = unique_urls.into_iter().collect();
 
     let mut successful_paths: Vec<String> = Vec::new();
-    let mut failed_paths: Vec<String> = Vec::new();
+    let mut failed_urls: Vec<String> = Vec::new();
 
     let shortlink_pattern = get_url_shortener_regex().await?;
 
     while let Some(url) = unique_urls.pop() {
         let filename = url.replace(|c: char| !c.is_ascii_alphanumeric(), "");
-        if cached_files.contains(&filename) {
-            debug!("Skipping already cached file {}", filename);
+        if let Some(full_path) = cached_files.get(&filename) {
+            debug!("Skipping already cached file {} at path: {:?}", filename, full_path);
+            successful_paths.push(full_path.clone());
             continue;
         }
 
@@ -57,7 +58,7 @@ pub async fn process_tts_save(tts_json_path: &str, cached_files: &HashSet<String
         let (bytes, _, extension) = match fetch_content(&url, dry_run).await {
             Ok(result) => result,
             Err(e) => {
-                failed_paths.push(url.clone());
+                failed_urls.push(url.clone());
                 error!("Failed to fetch content from {}: {}", url, e);
                 if ignore_error || dry_run {
                     continue;
@@ -120,14 +121,14 @@ pub async fn process_tts_save(tts_json_path: &str, cached_files: &HashSet<String
             let lua_urls = match extract::get_urls_from_str(&lua_str).await {
                 Ok(urls) => urls,
                 Err(e) => {
-                    failed_paths.push(url.clone());
+                    failed_urls.push(url.clone());
                     error!("Failed to extract urls from lua file: {}", e);
                     continue;
                 }
             };
             for lua_url in lua_urls {
                 let lua_filename = lua_url.replace(|c: char| !c.is_ascii_alphanumeric(), "");
-                if !unique_urls.contains(&lua_url) && !cached_files.contains(&lua_filename) {
+                if !unique_urls.contains(&lua_url) && !cached_files.contains_key(&lua_filename) {
                     unique_urls.push(lua_url);
                 }
             }
@@ -187,6 +188,8 @@ pub async fn process_tts_save(tts_json_path: &str, cached_files: &HashSet<String
             Ok(_) => info!("Successfully saved content from '{}' to '{}'", url, file_path),
             Err(e) => error!("Failed to save content from '{}' to '{}': {}", url, file_path, e),
         }
+
+        successful_paths.push(file_path);
     }
 
     // Check for a .png or .jpg file in the parent folder of tts_json_path and copy it to the Workshop folder
@@ -221,38 +224,42 @@ pub async fn process_tts_save(tts_json_path: &str, cached_files: &HashSet<String
 
     if let Some(workshop_image) = workshop_image {
         let workshop_image_filename = workshop_image.file_name().unwrap().to_string_lossy().to_string();
-        let workshop_image_path = format!("{}/{}", workshop_path, workshop_image_filename);
+        let workshop_image_path = format!("{}{}", workshop_path, workshop_image_filename);
 
         if dry_run {
             info!("Dry run: Would copy workshop image from {} to {}", workshop_image.display(), workshop_image_path);
+        } else {
+            if let Err(err) = fs::copy(&workshop_image, &workshop_image_path) {
+                return Err(format!("Failed to copy workshop image from {} to {}: {}", workshop_image.display(), workshop_image_path, err))?;
+            }
+            debug!("Copied workshop image from {} to {}", workshop_image.display(), workshop_image_path);
+            successful_paths.push(workshop_image_path);
         }
-        else if let Err(err) = fs::copy(&workshop_image, &workshop_image_path) {
-            return Err(format!("Failed to copy workshop image from {} to {}: {}", workshop_image.display(), workshop_image_path, err))?;
-        }
-        debug!("Copied workshop image from {} to {}", workshop_image.display(), workshop_image_path);
     }
 
-    // Replace the cloud-3.steamusercontent.com urls in the tts json file with the new steamusercontent-a.akamaihd.net urls as this will reflect the new urls in the cache
+    // We do this here instead of a copy to replace the cloud-3.steamusercontent.com urls in the tts json file with the new steamusercontent-a.akamaihd.net urls as this will reflect the new urls in the cache
     let mut tts_json_str = fs::read_to_string(tts_json_path)?;
     tts_json_str = tts_json_str.replace("http://cloud-3.steamusercontent.com/", "https://steamusercontent-a.akamaihd.net/");
-    let mut tts_json_file = fs::File::create(format!("{}/{}", workshop_path, tts_filename))?;
+    let mut tts_json_file = fs::File::create(format!("{}{}", workshop_path, tts_filename))?;
     tts_json_file.write_all(tts_json_str.as_bytes())?;
+    successful_paths.push(format!("{}{}", workshop_path, tts_filename));
 
-    if !failed_paths.is_empty() {
-        let missing_json_path = format!("{}/{}_missing.txt", workshop_path, tts_filestub);
+    if !failed_urls.is_empty() {
+        let missing_json_path = format!("{}{}_missing.txt", workshop_path, tts_filestub);
         if dry_run {
             info!("Dry run: Would write missing urls to {}", missing_json_path);
         } else {
             let mut missing_json_file = fs::File::create(&missing_json_path)?;
-            let missing_json_str = serde_json::to_string_pretty(&failed_paths)?;
+            let missing_json_str = serde_json::to_string_pretty(&failed_urls)?;
             missing_json_file.write_all(missing_json_str.as_bytes())?;
         }
+        successful_paths.push(missing_json_path.clone());
         debug!("Wrote missing urls to {}", missing_json_path);
     }
 
     successful_paths.append(&mut unique_urls);
 
-    Ok((successful_paths, failed_paths))
+    Ok((successful_paths, failed_urls))
 }
 
 async fn fetch_content(url: &str, dry_run: bool) -> Result<(Bytes, Option<String>, Option<String>), Box<dyn std::error::Error>> {
@@ -275,7 +282,7 @@ async fn fetch_content(url: &str, dry_run: bool) -> Result<(Bytes, Option<String
             Ok(resp) => {
                 if resp.status() != 200 {
                     if attempts >= max_retries {
-                        return Err(format!("Invalid response status from {}: {}", url, resp.status()).into());
+                        return Err(format!("Invalid response status {}", resp.status()).into());
                     }
                     debug!("Failed to fetch content from {}: {}. Retrying in 2 seconds...", url, resp.status());
                     sleep(Duration::from_secs(2)).await;

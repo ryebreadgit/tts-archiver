@@ -16,6 +16,7 @@ serde_yml = "0.0.12"
 structopt = "0.3.26"
 tokio = { version = "1.41.0", features = ["full"] }
 tree_magic = "0.2.3"
+zip = "2.2.0"
 
 [profile.release]
 opt-level = 'z'
