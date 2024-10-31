@@ -154,6 +154,10 @@ pub async fn process_tts_save(tts_json_path: &str, cached_files: &HashMap<String
                 ext = "txt";
             }
         }
+        else if ["json"].contains(&ext) {
+            file_path = text_path;
+            ext = "json";
+        }
         else if ["html"].contains(&ext) {
             // ignore html files
             continue;
