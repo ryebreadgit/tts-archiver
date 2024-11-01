@@ -280,15 +280,15 @@ async fn fetch_content(url: &str, dry_run: bool) -> Result<(Bytes, Option<String
     let mut attempts = 0;
 
     let client = reqwest::Client::new();
-    let user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:131.0) Gecko/20100101 Firefox/131.0";
+    let user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:132.0) Gecko/20100101 Firefox/132.0";
     let parsed_url = reqwest::Url::parse(url)?;
-    let host = parsed_url.host_str().ok_or("")?;
+    //let host = parsed_url.host_str().ok_or("")?;
 
     loop {
         attempts += 1;
         let res = match dry_run {
-            true => client.head(url).header(reqwest::header::USER_AGENT, user_agent).header(reqwest::header::HOST, host).send().await,
-            false => client.get(url).header(reqwest::header::USER_AGENT, user_agent).header(reqwest::header::HOST, host).send().await
+            true => client.head(url).header(reqwest::header::USER_AGENT, user_agent).send().await,
+            false => client.get(url).header(reqwest::header::USER_AGENT, user_agent).send().await
         };
         
         match res {
