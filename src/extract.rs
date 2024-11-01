@@ -1,5 +1,8 @@
 use regex::Regex;
 use std::error::Error;
+use std::fs;
+use std::io;
+use std::path::{Path, PathBuf};
 
 async fn get_url_regex() -> Result<Regex, Box<dyn Error>> {
     Regex::new(r"https?://[a-zA-Z0-9.-]+(:[0-9]+)?(/[a-zA-Z0-9&%_.~+-]*)+(\?[a-zA-Z0-9&%_.~+=-]*)?(#[a-zA-Z0-9&%_.~+=-]*)?").map_err(|e| e.into())
@@ -44,4 +47,18 @@ pub async fn get_urls_from_str(s: &str) -> Result<Vec<String>, Box<dyn Error>> {
     }
 
     Ok(urls)
+}
+
+pub fn get_json_files_from_dir(dir: &Path) -> io::Result<Vec<PathBuf>> {
+    fs::read_dir(dir)?
+        .filter_map(|entry| {
+            let entry = entry.ok()?;
+            let path = entry.path();
+            if path.is_file() && path.extension().unwrap_or_default() == "json" {
+                Some(Ok(path))
+            } else {
+                None
+            }
+        })
+        .collect()
 }

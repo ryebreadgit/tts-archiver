@@ -114,8 +114,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         })
         .collect::<HashMap<_, _>>();
 
-    for file in args.files {
-        let file = fs::canonicalize(file)?; // get full path
+    let processed_files: Vec<PathBuf> = args.files.into_iter().filter_map(|file| {
+        let canonical = fs::canonicalize(&file).ok()?;
+        if canonical.is_dir() {
+            Some(extract::get_json_files_from_dir(&canonical))
+        } else {
+            Some(Ok(vec![canonical]))
+        }
+    }).flatten().flatten().collect();
+
+    if processed_files.is_empty() {
+        error!("No files to process.");
+        return Err("No files to process.")?;
+    }
+
+    if processed_files.len() > 1 {
+        info!("Files to process: {:?}", processed_files);
+    }
+
+    for file in processed_files {
+        let file = fs::canonicalize(file)?;
+        info!("Processing input file: {}", file.display());
         let (successful_files, failed_files) = match process::process_tts_save(file.to_str().unwrap(), &cached_files, &cache_path, args.ignore_errors, args.dry_run, args.pack).await {
             Ok((successful_files, failed_files)) => (successful_files, failed_files),
             Err(err) => {
