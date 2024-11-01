@@ -5,7 +5,7 @@ use std::error::Error;
 use zip::write::{FileOptions, ZipWriter};
 use zip::CompressionMethod;
 
-pub async fn pack_files(files: Vec<String>, parent_folder: &str, output: &str) -> Result<(), Box<dyn Error>> {
+pub async fn pack_files(files: Vec<String>, cache_folder: &str, output: &str) -> Result<(), Box<dyn Error>> {
     let output_file = File::create(output)?;
     let mut zip = ZipWriter::new(output_file);
 
@@ -15,7 +15,7 @@ pub async fn pack_files(files: Vec<String>, parent_folder: &str, output: &str) -
         file.read_to_end(&mut buffer)?;
 
         let relative_path = Path::new(&file_path)
-            .strip_prefix(parent_folder)
+            .strip_prefix(cache_folder)
             .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "Invalid path"))?;
         let relative_path = relative_path.to_str().ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "Invalid path"))?;
 

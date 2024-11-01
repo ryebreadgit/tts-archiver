@@ -15,19 +15,19 @@ pub struct Args {
     verbose: bool,
 
     /// Dry run. Only does a head request to check if file exists and does not download, processing is still simulated.
-    #[structopt(short="dry", long)]
+    #[structopt(short="d", long)]
     dry_run: bool,
 
     /// Ignore errors (continue processing even if errors occur)
-    #[structopt(short="ignore", long)]
+    #[structopt(short="i", long)]
     ignore_errors: bool,
 
     /// Prefetch files only (do not zip files, only save to cache)
-    #[structopt(short="pre", long)]
+    #[structopt(short="p", long)]
     prefetch: bool,
 
     /// Pack files only (zip cached files, do not download new files)
-    #[structopt(short="p", long)]
+    #[structopt(long)]
     pack: bool,
 
     /// Output folder for downloaded files (Default: input file's parent folder)
@@ -42,6 +42,7 @@ pub struct Args {
     #[structopt(name = "TTS_SAVE_JSON(s)", parse(from_os_str))]
     files: Vec<PathBuf>,
 }
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let log4rs_config = include_str!("log4rs.yml");
@@ -67,6 +68,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Strip trailing slashes
     cache_path = cache_path.trim_end_matches('/').trim_end_matches('\\').to_string();
+    cache_path = cache_path.replace("\\", "/");
 
     if !PathBuf::from(&cache_path).exists() {
         error!("Cache path does not exist: {}", cache_path);
@@ -140,9 +142,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         };
 
-        let output_path = format!("{}/{}.zip", output_folder, file.file_stem().unwrap().to_str().unwrap());
+        let output_path = format!("{}/{}.zip", output_folder, file.file_stem().unwrap().to_str().unwrap()).replace("\\", "/");
 
-        store::pack_files(successful_files, &cache_path, &output_path).await?;
+        match store::pack_files(successful_files, &cache_path, &output_path).await {
+            Ok(_) => (),
+            Err(err) => {
+                error!("Error packing files to archive: {}", err);
+                continue
+            }
+        }
         info!("Completed backing up archive to: {}", output_path);
     }
 
