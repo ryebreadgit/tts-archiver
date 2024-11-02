@@ -1,18 +1,18 @@
 mod extract;
 mod process;
 mod store;
-use std::{fs, hash::Hash};
+mod logging;
+use std::fs;
 use std::collections::HashMap;
-use log::{info, error, debug};
-use log4rs::{config::RawConfig, init_raw_config};
+use log::{info, error, LevelFilter};
 use structopt::StructOpt;
 use std::path::PathBuf;
 
 #[derive(StructOpt, Debug)]
 #[structopt(name = "tts-archiver")]
 pub struct Args {
-    #[structopt(short="v", long)]
-    verbose: bool,
+    #[structopt(short, long, parse(from_occurrences))]
+    verbose: u8,
 
     /// Dry run. Only does a head request to check if file exists and does not download, processing is still simulated.
     #[structopt(short="d", long)]
@@ -45,10 +45,22 @@ pub struct Args {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let log4rs_config = include_str!("log4rs.yml");
-    let raw_config: RawConfig = serde_yml::from_str(log4rs_config)?;
-    init_raw_config(raw_config)?;
     let args = Args::from_args();
+    let app_log_level = match args.verbose {
+        0 => LevelFilter::Warn,
+        1 => LevelFilter::Info,
+        2 => LevelFilter::Debug,
+        3 | _ => LevelFilter::Trace,
+    };
+    let root_log_level = match args.verbose {
+        0 | 1 => LevelFilter::Info,
+        2 => LevelFilter::Debug,
+        3 | _ => LevelFilter::Trace,
+    };
+    logging::init_logging(
+        root_log_level,
+        app_log_level,
+    )?;
 
     info!("Starting up");
 
@@ -188,11 +200,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     if all_successes.len() > 0 {
-        info!("Completed processing files: {:?}", all_successes);
+        info!("Completed processing files: {:?}", serde_json::to_string_pretty(&all_successes)?);
     }
 
     if all_failures.len() > 0 {
-        error!("Failed to process files: {:?}", all_failures);
+        error!("Some failures occurred on the following: {:?}", serde_json::to_string_pretty(&all_failures)?);
     }
 
     Ok(())

@@ -60,13 +60,18 @@ pub async fn process_tts_save(tts_json_path: &str, cached_files: &HashMap<String
         }
 
         if shortlink_pattern.is_match(&url) {
-            warn!("Skipping shortlink: {}", url);
+            debug!("Skipping shortlink: {}", url);
             continue;
         }
 
         let (bytes, _, extension) = match fetch_content(&url, dry_run).await {
             Ok(result) => result,
             Err(e) => {
+                // Do quick url check to see if it's an html or php file to ignore
+                if url.ends_with(".html") || url.ends_with(".php") {
+                    debug!("Skipping html/php file: {}", url);
+                    continue;
+                }
                 failed_urls.push(url.clone());
                 error!("Failed to fetch content from {}: {}", url, e);
                 if ignore_error || dry_run {
@@ -158,8 +163,9 @@ pub async fn process_tts_save(tts_json_path: &str, cached_files: &HashMap<String
             file_path = text_path;
             ext = "json";
         }
-        else if ["html"].contains(&ext) {
-            // ignore html files
+        else if ["html", "php"].contains(&ext) {
+            // ignore html & php files
+            debug!("Skipping html/php file: {}", url);
             continue;
         }
 
@@ -281,7 +287,6 @@ async fn fetch_content(url: &str, dry_run: bool) -> Result<(Bytes, Option<String
 
     let client = reqwest::Client::new();
     let user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:132.0) Gecko/20100101 Firefox/132.0";
-    let parsed_url = reqwest::Url::parse(url)?;
     //let host = parsed_url.host_str().ok_or("")?;
 
     loop {
