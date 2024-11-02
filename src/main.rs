@@ -151,6 +151,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut all_successes: Vec<String> = Vec::new();
 
     for file_str in processed_files {
+        let file_str = file_str.replace("\\", "/");
         let file = fs::canonicalize(&file_str)?;
         info!("Processing input file: {}", file.display());
         let (successful_files, failed_files) = match process::process_tts_save(file.to_str().unwrap(), &cached_files, &cache_path, args.ignore_errors, args.dry_run, args.pack).await {
@@ -199,12 +200,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         all_successes.push(output_path);
     }
 
-    if all_successes.len() > 0 {
-        info!("Completed processing files:\n{}", serde_json::to_string_pretty(&all_successes)?);
-    }
-
     if all_failures.len() > 0 {
         error!("Some failures occurred on the following:\n{}", serde_json::to_string_pretty(&all_failures)?);
+    }
+
+    if all_successes.len() > 0 {
+        info!("Completed processing files:\n{}", serde_json::to_string_pretty(&all_successes)?);
     }
 
     Ok(())
