@@ -1,7 +1,7 @@
 mod extract;
 mod process;
 mod store;
-use std::fs;
+use std::{fs, hash::Hash};
 use std::collections::HashMap;
 use log::{info, error, debug};
 use log4rs::{config::RawConfig, init_raw_config};
@@ -48,10 +48,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let log4rs_config = include_str!("log4rs.yml");
     let raw_config: RawConfig = serde_yml::from_str(log4rs_config)?;
     init_raw_config(raw_config)?;
+    let args = Args::from_args();
 
     info!("Starting up");
-
-    let args = Args::from_args();
 
     // set base cache path to {USERPROFILE}\Documents\My Games\Tabletop Simulator
     let user = std::env::var("USERPROFILE")?;
@@ -114,14 +113,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         })
         .collect::<HashMap<_, _>>();
 
-    let processed_files: Vec<PathBuf> = args.files.into_iter().filter_map(|file| {
-        let canonical = fs::canonicalize(&file).ok()?;
-        if canonical.is_dir() {
-            Some(extract::get_json_files_from_dir(&canonical))
-        } else {
-            Some(Ok(vec![canonical]))
-        }
-    }).flatten().flatten().collect();
+        let processed_files: Vec<String> = args.files.into_iter().filter_map(|file| {
+            let canonical = fs::canonicalize(&file).ok()?;
+            if canonical.is_dir() {
+                Some(extract::get_json_files_from_dir(&canonical))
+            } else {
+                Some(Ok(vec![canonical]))
+            }
+        })
+        .flatten()
+        .flatten()
+        .filter_map(|path| path.to_str().map(String::from))
+        .collect();
 
     if processed_files.is_empty() {
         error!("No files to process.");
@@ -132,8 +135,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         info!("Files to process: {:?}", processed_files);
     }
 
-    for file in processed_files {
-        let file = fs::canonicalize(file)?;
+    let mut all_failures: HashMap<String, Vec<String>> = HashMap::new();
+    let mut all_successes: Vec<String> = Vec::new();
+
+    for file_str in processed_files {
+        let file = fs::canonicalize(&file_str)?;
         info!("Processing input file: {}", file.display());
         let (successful_files, failed_files) = match process::process_tts_save(file.to_str().unwrap(), &cached_files, &cache_path, args.ignore_errors, args.dry_run, args.pack).await {
             Ok((successful_files, failed_files)) => (successful_files, failed_files),
@@ -143,7 +149,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         };
 
-        info!("Preprocessing completed. {} files processed, {} files failed.", successful_files.len(), failed_files.len());
+        let ff_len = failed_files.len();
+
+        if ff_len > 0 {
+            error!("Failed to process files: {:?}", failed_files);
+            all_failures.insert(file_str, failed_files);
+        }
+
+        info!("Preprocessing completed. {} files processed, {} files failed.", successful_files.len(), ff_len);
         if args.dry_run {
             info!("Dry run completed. No files downloaded.");
             continue;
@@ -171,6 +184,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
         info!("Completed backing up archive to: {}", output_path);
+        all_successes.push(output_path);
+    }
+
+    if all_successes.len() > 0 {
+        info!("Completed processing files: {:?}", all_successes);
+    }
+
+    if all_failures.len() > 0 {
+        error!("Failed to process files: {:?}", all_failures);
     }
 
     Ok(())
