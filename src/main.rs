@@ -112,8 +112,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .chain(fs::read_dir(&pdf_path)?)
         .chain(fs::read_dir(&workshop_path)?)
         .chain(fs::read_dir(&model_path)?)
-        .chain(fs::read_dir(&image_raw_path)?)
-        .chain(fs::read_dir(&model_raw_path)?)
         .chain(fs::read_dir(&assetbundles_path)?)
         .chain(fs::read_dir(&text_path)?)
         .filter_map(|entry| {
