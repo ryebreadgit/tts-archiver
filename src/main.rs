@@ -200,11 +200,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     if all_successes.len() > 0 {
-        info!("Completed processing files: {:?}", serde_json::to_string_pretty(&all_successes)?);
+        info!("Completed processing files:\n{}", serde_json::to_string_pretty(&all_successes)?);
     }
 
     if all_failures.len() > 0 {
-        error!("Some failures occurred on the following: {:?}", serde_json::to_string_pretty(&all_failures)?);
+        error!("Some failures occurred on the following:\n{}", serde_json::to_string_pretty(&all_failures)?);
     }
 
     Ok(())
